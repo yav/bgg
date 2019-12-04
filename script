@@ -1,3 +1,0 @@
-#!/bin/bash
-
-wget -O out.xml https://www.boardgamegeek.com/xmlapi/geeklist/146056?comments=1

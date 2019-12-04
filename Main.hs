@@ -1,53 +1,67 @@
-{-# Language RecordWildCards #-}
-module Main(main) where
+{-# Language OverloadedStrings #-}
+module Main where
 
+import Data.Maybe(fromMaybe)
+import Data.Char
+import Data.List
 import Text.XML.Light
-import Text.XML.Light.Input
-import Text.XML.Light.Proc
-import Data.Maybe(mapMaybe)
-import Data.Char(isDigit,isSpace)
-
+import Text.PrettyPrint
+import Data.Ord
 
 main :: IO ()
-main =
-  do txt <- readFile "out.xml"
-     let xml = onlyElems (parseXML txt)
-         items = concatMap (filterElements ((== unqual "item") . elName)) xml
-     mapM_ (putStrLn . ppItem) $ mapMaybe parseItem items
+main = interact
+     ( (++"\n")
+     . show
+     . vsep
+     . map snd
+     . sortBy (comparing fst)
+     . map renderItem
+     . concatMap (findChildren (name "item"))
+     . onlyElems
+     . parseXML
+     )
+
+name :: String -> QName
+name x = blank_name { qName = x }
+
+vsep :: [Doc] -> Doc
+vsep = vcat . intersperse " "
+
+getAttr :: Element -> String -> Doc
+getAttr el x = text (fromMaybe "?" (findAttr (name x) el))
 
 
-data Item = Item
-  { gameId :: String
-  , gameName :: String
-  , gameDescription :: String
-  , gameComments :: [String]
-  } deriving Show
-
-parseItem :: Element -> Maybe Item
-parseItem el =
-  do gameId <- attr "objectid"
-     gameName <- attr "objectname"
-     body <- findElement (unqual "body") el
-     let gameDescription = strContent body
-         cs = findChildren (unqual "comment") el
-         gameComments = map strContent cs
-     pure Item { .. }
+renderItem :: Element -> (String,Doc)
+renderItem el = (show nm, txt)
 
   where
-  as = elAttribs el
-  attr a = lookupAttr (unqual a) as
+  nm = getAttr el "objectname"
+  txt = quotes nm <+> "by" <+> getAttr el "username"
+        <+> url el $$
+            nest 2 (vcat $ [ "*" <+> getText c
+                           | c <- findChildren (name "body") el
+                           ] ++
+                           [ "*" <+> renderComment c
+                           | c <- findChildren (name "comment") el
+                           ])
 
-ppItem :: Item -> String
-ppItem Item { .. } = unlines $
-  [ "* " ++ gameName  ++ ", " ++ unwords (findPrice gameDescription)] ++
-  [ "  " ++ x | x <- lines gameDescription ] ++
-  concat [ block "    - " "      " x | x <- gameComments ]
-  where
-  block p1 pmore xs = case dropWhile (all isSpace) (lines xs) of
-                        [] -> []
-                        a : as -> (p1 ++ a) : map (pmore ++) as
+(<.>) :: Doc -> Doc -> Doc
+(<.>) = (Text.PrettyPrint.<>)
 
-findPrice :: String -> [String]
-findPrice x = case break (== '$') x of
-                 (_,_:xs) -> takeWhile isDigit xs : findPrice (dropWhile isDigit xs)
-                 _ -> []
+url :: Element -> Doc
+url el = hcat [ "https://boardgamegeek.com/geeklist/146056/item/",
+                                                          n, "#item", n ]
+  where n = getAttr el "id"
+
+renderComment :: Element -> Doc
+renderComment el =
+  getAttr el "username" <.> ":" <+> getText el
+
+getText = vcat
+        . map text
+        . dropWhile (all isSpace)
+        . lines
+        . concatMap cdData
+        . onlyText
+        . elContent
+
